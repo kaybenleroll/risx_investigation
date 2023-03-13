@@ -1,0 +1,265 @@
+---
+title: "Initial Exploration of the RISX Index Data"
+author: "Mick Cooney <mickcooney@gmail.com>"
+date: "Last updated: `r format(Sys.time(), '%B %d, %Y')`"
+editor: source
+execute:
+  message: false
+  warning: false
+  error: false
+format:
+  html:
+    light: superhero
+    dark: darkly
+    anchor-sections: true
+    embed-resources: true
+    number-sections: true
+    smooth-scroll: true
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    code-fold: true
+    code-summary: "Show code"
+---
+
+
+```{r import_libraries}
+#| echo: FALSE
+#| message: FALSE
+
+library(conflicted)
+library(tidyverse)
+library(scales)
+library(readxl)
+library(cowplot)
+library(directlabels)
+library(magrittr)
+library(rlang)
+library(fs)
+library(purrr)
+library(furrr)
+library(glue)
+library(tidyquant)
+
+
+source("lib_utils.R")
+
+
+conflict_lst <- resolve_conflicts(
+  c("magrittr", "rlang", "dplyr", "readr", "purrr", "ggplot2", "MASS",
+    "fitdistrplus")
+  )
+
+
+knitr::opts_chunk$set(
+  tidy       = FALSE,
+  cache      = FALSE,
+  warning    = FALSE,
+  message    = FALSE,
+  fig.height =     8,
+  fig.width  =    11
+  )
+
+options(
+  width = 80L,
+  warn  = 1,
+  mc.cores = parallel::detectCores()
+  )
+
+theme_set(theme_cowplot())
+
+set.seed(42)
+
+plan(multisession)
+```
+
+In this workbook we perform some basic investigation of the RISX index, that
+tracks the performance of the overall Lloyd's Market via some financial
+engineering.
+
+# Load and Inspect RISX Data
+
+Daily values for the RISX index has been provided and is stored in the datafile
+with the name `RISX_index_data.xlsx`.
+
+We load that data and then plot it.
+
+```{r load_risx_data}
+#! echo: true
+
+index_data_tbl <- read_excel("data/RISX_index_data.xlsx") |>
+  set_colnames(c("date_dttm", "index_type", "index_name", "index_value")) |>
+  mutate(
+    date = date_dttm |> as.Date(),
+    
+    .before = 1
+    )
+
+index_data_tbl |> glimpse()
+```
+
+
+## Lineplot of the Index Values
+
+```{r plot_index_lineplots}
+#! echo: true
+
+ggplot(index_data_tbl) +
+  geom_line(aes(x = date, y = index_value, colour = index_name)) +
+  expand_limits(y = 0) +
+  scale_y_continuous(labels = label_comma()) +
+  labs(
+    x = "Date",
+    y = "Value",
+    colour = "Index",
+    title = "Lineplot of the RISX and RISXNTR Indices"
+    )
+```
+
+We also want to calculate the daily returns of the index and we can use that
+using features in the `tidyquant` package.
+
+
+```{r calculate_index_daily_returns}
+#| echo: true
+
+index_daily_returns_tbl <- index_data_tbl |>
+  group_by(index_name) |>
+  tq_transmute(
+    index_value, dailyReturn, col_rename = "daily_return"
+    ) |>
+  ungroup()
+
+index_daily_returns_tbl |> glimpse()
+```
+
+We also want to calculate monthly returns, as the distribution of them is closer
+to a Normal distribution than daily returns.
+
+
+```{r calculate_index_monthly_returns}
+#| echo: true
+
+index_monthly_returns_tbl <- index_data_tbl |>
+  group_by(index_name) |>
+  tq_transmute(
+    index_value, monthlyReturn, col_rename = "monthly_return"
+    ) |>
+  ungroup()
+
+index_monthly_returns_tbl |> glimpse()
+```
+
+
+## Investigate RISX Index Returns
+
+For now we focus our initial investigations into the basic price index, RISX.
+Later we can repeat the analysis for the RISXNTR as this will capture the full
+effect of being invested in these business. We expect the effect of dividends
+to be significant as insurance companies typically provide solid dividends as a
+matter of course.
+
+For the moment though, we focus on the RISX.
+
+```{r plot_risx_returns_distribution}
+risx_daily_returns_tbl <- index_daily_returns_tbl |>
+  filter(index_name == "RISX")
+
+risx_daily_returns_tbl |> glimpse()
+
+
+risx_monthly_returns_tbl <- index_monthly_returns_tbl |>
+  filter(index_name == "RISX")
+
+risx_monthly_returns_tbl |> glimpse()
+```
+
+We start by looking at the overall distribution of returns, and compare those
+to the corresponding Normal distribution (as determined by the sample mean and
+standard deviation of those returns).
+
+
+```{r compare_daily_returns_to_normal}
+#! echo: true
+
+return_mu <- risx_daily_returns_tbl |> pull(daily_return) |> mean()
+return_sd <- risx_daily_returns_tbl |> pull(daily_return) |> sd()
+
+plot_tbl <- risx_daily_returns_tbl |>
+  mutate(
+    `Return` = daily_return,
+    `Normal` = rnorm(n(), mean = return_mu, sd = return_sd)
+    ) |>
+  pivot_longer(
+    cols      = c(Return, Normal),
+    names_to  = "label",
+    values_to = "value"
+    )
+
+ggplot(plot_tbl) +
+  geom_histogram(
+    aes(x = value, fill = label),
+    position = "identity", bins = 50, alpha = 0.5
+    ) +
+  scale_y_continuous(labels = label_comma()) +
+  labs(
+    x     = "Value",
+    y     = "Frequency",
+    fill  = "Quantity",
+    title = "Comparison of Histogram for Daily Returns and Benchmark Normal"
+    )
+```
+
+
+We now repeat this exercise with the monthly returns.
+
+```{r compare_monthly_returns_to_normal}
+#! echo: true
+
+return_mu <- risx_monthly_returns_tbl |> pull(monthly_return) |> mean()
+return_sd <- risx_monthly_returns_tbl |> pull(monthly_return) |> sd()
+
+plot_tbl <- risx_monthly_returns_tbl |>
+  mutate(
+    `Return` = monthly_return,
+    `Normal` = rnorm(n(), mean = return_mu, sd = return_sd)
+    ) |>
+  pivot_longer(
+    cols      = c(Return, Normal),
+    names_to  = "label",
+    values_to = "value"
+    )
+
+ggplot(plot_tbl) +
+  geom_histogram(
+    aes(x = value, fill = label),
+    position = "identity", bins = 20, alpha = 0.5
+    ) +
+  scale_y_continuous(labels = label_comma()) +
+  labs(
+    x     = "Value",
+    y     = "Frequency",
+    fill  = "Quantity",
+    title = "Comparison of Histogram for Monthly Returns and Benchmark Normal"
+    )
+```
+
+
+
+
+
+
+
+
+
+
+# R Environment
+
+```{r show_session_info}
+#| echo: TRUE
+#| message: TRUE
+
+options(width = 120L)
+sessioninfo::session_info()
+options(width = 80L)
+```
