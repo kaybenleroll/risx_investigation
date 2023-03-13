@@ -77,7 +77,9 @@ In this workbook we perform some basic investigation of the RISX index, that
 tracks the performance of the overall Lloyd's Market via some financial
 engineering.
 
-# Load and Inspect RISX Data
+# Load Data
+
+## Load and Inspect RISX Data
 
 Daily values for the RISX index has been provided and is stored in the datafile
 with the name `RISX_index_data.xlsx`.
@@ -87,7 +89,7 @@ We load that data and then plot it.
 ```{r load_risx_data}
 #! echo: true
 
-index_data_tbl <- read_excel("data/RISX_index_data.xlsx") |>
+risx_input_data_tbl <- read_excel("data/RISX_index_data.xlsx") |>
   set_colnames(c("date_dttm", "index_type", "index_name", "index_value")) |>
   mutate(
     date = date_dttm |> as.Date(),
@@ -95,16 +97,58 @@ index_data_tbl <- read_excel("data/RISX_index_data.xlsx") |>
     .before = 1
     )
 
+risx_input_data_tbl |> glimpse()
+```
+
+
+## Load and Inspect KIE ETF Data
+
+We now repeat this process using the price data from the KIE ETF, which tracks
+the S&P Insurance industry group (a subset of the S&P 500).
+
+This should prove as an interesting comparison point against the RISX values.
+
+```{r retrieve_kie_price_data}
+#| echo: true
+
+min_data_date <- risx_input_data_tbl |> pull(date) |> min()
+max_data_date <- risx_input_data_tbl |> pull(date) |> max()
+
+kie_data_tbl <- tq_get("KIE", from = min_data_date, to = max_data_date) |>
+  select(index_name = symbol, date, index_value = adjusted)
+
+kie_data_tbl |> glimpse()
+```
+
+
+## Combine Index Data
+
+To make it easier to run this analysis, we now combine all the data into a
+single table with daily values for each ticker symbol.
+
+```{r combine_index_data}
+#| echo: true
+
+index_data_tbl <- list(
+      risx_input_data_tbl |> select(index_name, date, index_value),
+      kie_data_tbl
+    ) |>
+  bind_rows()
+
 index_data_tbl |> glimpse()
 ```
+
 
 
 ## Lineplot of the Index Values
 
 ```{r plot_index_lineplots}
 #! echo: true
+plot_data_tbl <- index_data_tbl |>
+  filter(index_name %in% c("RISX", "RISXNTR"))
 
-ggplot(index_data_tbl) +
+
+ggplot(plot_data_tbl) +
   geom_line(aes(x = date, y = index_value, colour = index_name)) +
   expand_limits(y = 0) +
   scale_y_continuous(labels = label_comma()) +
@@ -151,13 +195,16 @@ index_monthly_returns_tbl |> glimpse()
 ```
 
 
-## Investigate RISX Index Returns
+# Investigate Index Returns
 
 For now we focus our initial investigations into the basic price index, RISX.
 Later we can repeat the analysis for the RISXNTR as this will capture the full
 effect of being invested in these business. We expect the effect of dividends
 to be significant as insurance companies typically provide solid dividends as a
 matter of course.
+
+
+## RISX Index
 
 For the moment though, we focus on the RISX.
 
@@ -179,7 +226,7 @@ to the corresponding Normal distribution (as determined by the sample mean and
 standard deviation of those returns).
 
 
-```{r compare_daily_returns_to_normal}
+```{r compare_risx_daily_returns_to_normal}
 #! echo: true
 
 return_mu <- risx_daily_returns_tbl |> pull(daily_return) |> mean()
@@ -206,14 +253,14 @@ ggplot(plot_tbl) +
     x     = "Value",
     y     = "Frequency",
     fill  = "Quantity",
-    title = "Comparison of Histogram for Daily Returns and Benchmark Normal"
+    title = "Comparison of Histogram for RISX Daily Returns and Benchmark Normal"
     )
 ```
 
 
 We now repeat this exercise with the monthly returns.
 
-```{r compare_monthly_returns_to_normal}
+```{r compare_risx_monthly_returns_to_normal}
 #! echo: true
 
 return_mu <- risx_monthly_returns_tbl |> pull(monthly_return) |> mean()
@@ -240,16 +287,279 @@ ggplot(plot_tbl) +
     x     = "Value",
     y     = "Frequency",
     fill  = "Quantity",
-    title = "Comparison of Histogram for Monthly Returns and Benchmark Normal"
+    title = "Comparison of Histogram for RISX Monthly Returns and Benchmark Normal"
+    )
+```
+
+
+## KIE ETF
+
+We now repeat this analysis for the KIE Index
+
+```{r plot_kie_returns_distribution}
+kie_daily_returns_tbl <- index_daily_returns_tbl |>
+  filter(index_name == "KIE")
+
+kie_daily_returns_tbl |> glimpse()
+
+
+kie_monthly_returns_tbl <- index_monthly_returns_tbl |>
+  filter(index_name == "RISX")
+
+kie_monthly_returns_tbl |> glimpse()
+```
+
+We start by looking at the overall distribution of returns, and compare those
+to the corresponding Normal distribution (as determined by the sample mean and
+standard deviation of those returns).
+
+
+```{r compare_kie_daily_returns_to_normal}
+#! echo: true
+
+return_mu <- kie_daily_returns_tbl |> pull(daily_return) |> mean()
+return_sd <- kie_daily_returns_tbl |> pull(daily_return) |> sd()
+
+plot_tbl <- kie_daily_returns_tbl |>
+  mutate(
+    `Return` = daily_return,
+    `Normal` = rnorm(n(), mean = return_mu, sd = return_sd)
+    ) |>
+  pivot_longer(
+    cols      = c(Return, Normal),
+    names_to  = "label",
+    values_to = "value"
+    )
+
+ggplot(plot_tbl) +
+  geom_histogram(
+    aes(x = value, fill = label),
+    position = "identity", bins = 50, alpha = 0.5
+    ) +
+  scale_y_continuous(labels = label_comma()) +
+  labs(
+    x     = "Value",
+    y     = "Frequency",
+    fill  = "Quantity",
+    title = "Comparison of Histogram for KIE Daily Returns and Benchmark Normal"
+    )
+```
+
+
+We now repeat this exercise with the monthly returns.
+
+```{r compare_kie_monthly_returns_to_normal}
+#! echo: true
+
+return_mu <- risx_monthly_returns_tbl |> pull(monthly_return) |> mean()
+return_sd <- risx_monthly_returns_tbl |> pull(monthly_return) |> sd()
+
+plot_tbl <- risx_monthly_returns_tbl |>
+  mutate(
+    `Return` = monthly_return,
+    `Normal` = rnorm(n(), mean = return_mu, sd = return_sd)
+    ) |>
+  pivot_longer(
+    cols      = c(Return, Normal),
+    names_to  = "label",
+    values_to = "value"
+    )
+
+
+ggplot(plot_tbl) +
+  geom_histogram(
+    aes(x = value, fill = label),
+    position = "identity", bins = 20, alpha = 0.5
+    ) +
+  scale_y_continuous(labels = label_comma()) +
+  labs(
+    x     = "Value",
+    y     = "Frequency",
+    fill  = "Quantity",
+    title = "Comparison of Histogram for KIE Monthly Returns and Benchmark Normal"
+    )
+```
+
+
+# Comparison of KIE and RISX Data
+
+We now want to directly compare the RISX to the KIE.
+
+
+## Lineplots of the Index
+
+We now normalise the value of the different indexes to the same date and then
+create a plot of each of them, paying particular attention to comparing the
+RISX against the KIE.
+
+```{r construct_comparison_lineplots}
+#| echo: true
+
+normalised_data_tbl <- index_data_tbl |>
+  group_by(index_name) |>
+  mutate(
+    norm_val = index_value / index_value[1]
+    ) |>
+  ungroup()
+
+
+ggplot(normalised_data_tbl) +
+  geom_line(aes(x = date, y = norm_val, colour = index_name)) +
+  expand_limits(y = 0) +
+  labs(
+    x = "Date",
+    y = "Normalised Value",
+    colour = "Index",
+    title = "Comparison of Normalised Index Values"
+    )
+
+
+plot_data_tbl <- normalised_data_tbl |>
+  filter(index_name %in% c("RISX", "KIE"))
+
+ggplot(plot_data_tbl) +
+  geom_line(aes(x = date, y = norm_val, colour = index_name)) +
+  expand_limits(y = 0) +
+  labs(
+    x = "Date",
+    y = "Normalised Value",
+    colour = "Index",
+    title = "Comparison of Normalised Index Values"
+    )
+
+```
+
+
+## Histograms of the Returns
+
+```{r compare_risx_kie_returns}
+#| echo: true
+
+plot_data_tbl <- index_daily_returns_tbl |>
+  filter(index_name %in% c("RISX", "KIE"))
+
+ggplot(plot_data_tbl) +
+  geom_histogram(
+    aes(x = daily_return, fill = index_name),
+    position = "identity", bins = 50, alpha = 0.5
+    ) +
+  scale_y_continuous(labels = label_comma()) +
+  labs(
+    x     = "Value",
+    y     = "Frequency",
+    fill  = "Quantity",
+    title = "Comparison of Histogram for KIE and RISX Daily Returns"
+    )
+
+
+plot_data_tbl <- index_monthly_returns_tbl |>
+  filter(index_name %in% c("RISX", "KIE"))
+
+ggplot(plot_data_tbl) +
+  geom_histogram(
+    aes(x = monthly_return, fill = index_name),
+    position = "identity", bins = 20, alpha = 0.5
+    ) +
+  scale_y_continuous(labels = label_comma()) +
+  labs(
+    x     = "Value",
+    y     = "Frequency",
+    fill  = "Quantity",
+    title = "Comparison of Histogram for KIE and RISX Monthly Returns"
     )
 ```
 
 
 
+# Calculate Index Volatilities
+
+To use these index values in options we need to understand the volatility of
+the underlying index.
+
+We start by calculating the volatility of the index over a number of different
+time horizons, calculating the historical volatility.
+
+```{r calculate_index_historical_volatility}
+# echo: true
+
+index_volatility_data_tbl <- index_data_tbl |>
+  group_by(index_name) |>
+  tq_transmute(
+    index_value, volatility, col_rename = "vol060", n = 60
+    ) |>
+  ungroup()
+
+index_monthly_returns_tbl |> glimpse()
+```
+
+## Calculate Historical Volatility
+
+We start by choosing a number of different volatility horizons to investigate
+and then calculate these volatilities for each index.
+
+```{r calculate_historical_volatilities}
+#| echo: true
+
+calc_horizon_vols <- ~ index_data_tbl |>
+  group_by(index_name) |>
+  tq_transmute(index_value, volatility, col_rename = "histvol", n = .x)
+
+vol_data_tbl <- tibble(vol_horizon = c(130, 260, 390, 520)) |>
+  mutate(
+    data = map(
+      vol_horizon, calc_horizon_vols
+      )
+    ) |>
+  unnest(data) |>
+  select(index_name, date, vol_horizon, histvol)
+
+vol_data_tbl |> glimpse()
+```
+
+We now look at each of these volatilities in turn, looking at the line plot of
+historical volatility for the indices.
+
+```{r plot_lineplot_volatility}
+#| echo: true
+
+plot_data_tbl <- vol_data_tbl |>
+  drop_na(histvol)
+
+ggplot(vol_data_tbl) +
+  geom_line(aes(x = date, y = histvol, colour = index_name)) +
+  expand_limits(y = 0) +
+  facet_wrap(vars(vol_horizon)) +
+  labs(
+    x = "Date",
+    y = "Volatility",
+    colour = "Index",
+    title = "Plot of Historical Volatilities"
+    )
 
 
+```
 
 
+We focus in on the 1-year horizon (260 days).
+
+```{r plot_260_histvol}
+#| echo: true
+
+plot_data_tbl <- vol_data_tbl |>
+  filter(vol_horizon == 260) |>
+  drop_na(histvol)
+
+ggplot(plot_data_tbl) +
+  geom_line(aes(x = date, y = histvol, colour = index_name)) +
+  expand_limits(y = 0) +
+  labs(
+    x = "Date",
+    y = "Volatility",
+    colour = "Index",
+    title = "Plot of 260-day Historical Volatility"
+    )
+
+```
 
 
 
